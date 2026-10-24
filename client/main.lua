@@ -1,8 +1,18 @@
 local config = require 'config.client'
-local JOBS = exports.qbx_core:GetJobs()
-local GANGS = exports.qbx_core:GetGangs()
 local isLoggedIn = LocalPlayer.state.isLoggedIn
 local dynamicMenuItems = {}
+
+-- Always read groups from core instead of caching them on start. On join this script starts before
+-- core has received the server's groups, so a cached copy holds the default shared/jobs.lua data
+---@param groupName string
+---@param groupType GroupType
+---@return Job|Gang?
+local function getGroup(groupName, groupType)
+    if groupType == 'gang' then
+        return exports.qbx_core:GetGangs()[groupName]
+    end
+    return exports.qbx_core:GetJobs()[groupName]
+end
 
 -- Adds item to the boss/gang menu.
 ---@param menuItem ContextMenuItem Requires args.type to be set to know which menu to place in.
@@ -41,7 +51,7 @@ end
 ---@param groupType GroupType
 local function manageEmployee(player, groupName, groupType)
     local employeeMenu = {}
-    local employeeLoop = groupType == 'gang' and GANGS[groupName].grades or JOBS[groupName].grades
+    local employeeLoop = getGroup(groupName, groupType).grades
     for groupGrade, gradeTitle in pairs(employeeLoop) do
         employeeMenu[#employeeMenu + 1] = {
             title = gradeTitle.name,
@@ -112,10 +122,15 @@ local function employeeList(groupType)
     local employeesMenu = {}
     local groupName = QBX.PlayerData[groupType].name
     local employees = lib.callback.await('qbx_management:server:getEmployees', false, groupName, groupType)
+    if not employees then return end
+
+    local grades = getGroup(groupName, groupType).grades
     for _, employee in pairs(employees) do
+        local gradeData = grades[employee.grade]
         local employeesData = {
             title = employee.name,
-            description = groupType == 'job' and JOBS[groupName].grades[employee.grade].name or GANGS[groupName].grades[employee.grade].name,
+            -- Fall back to the grade number so one employee with a removed grade doesn't break the whole list
+            description = gradeData and gradeData.name or locale('menu.grade')..employee.grade,
             onSelect = function()
                 manageEmployee(employee, groupName, groupType)
             end,
@@ -174,7 +189,7 @@ end
 local function showGradeMenu(groupType)
     local gradeOpts = {}
     local groupName = QBX.PlayerData[groupType].name
-    local groupData = groupType == 'gang' and GANGS[groupName] or JOBS[groupName]
+    local groupData = getGroup(groupName, groupType)
 
     for i = 0, #groupData.grades do
         local grade = groupData.grades[i]
@@ -371,20 +386,6 @@ RegisterNetEvent('QBCore:Client:OnPlayerUnload', function()
     isLoggedIn = false
     removeZones()
     lib.hideTextUI()
-end)
-
----Receive job updates from core
----@param jobName string
----@param job Job
-RegisterNetEvent('qbx_core:client:onJobUpdate', function(jobName, job)
-    JOBS[jobName] = job
-end)
-
----Receive gang updates from core
----@param gangName string
----@param gang Gang
-RegisterNetEvent('qbx_core:client:onGangUpdate', function(gangName, gang)
-    GANGS[gangName] = gang
 end)
 
 -- Covers a resource restart while already logged in; a fresh join is handled by OnPlayerLoaded
